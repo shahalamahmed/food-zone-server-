@@ -1,16 +1,18 @@
 const express = require('express');
-const app = express();
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 require('dotenv').config();
-// const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+// const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // Uncomment this if Stripe is needed
+const { MongoClient, ServerApiVersion } = require('mongodb');
+
+const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+// MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yf0cbug.mongodb.net/?retryWrites=true&w=majority`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -24,10 +26,17 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        const subscribersCollection = client.db("ElectroDB").collection("subscribers");
-        const userCollection = client.db("ElectroDB").collection("users");
-        const productsCollection = client.db("ElectroDB").collection("products");
-        const blogCollection = client.db("ElectroDB").collection("blogs");
+        await client.connect();
+        console.log("Connected to MongoDB!");
+
+        // Database Collections
+        const db = client.db("ElectroDB");
+        const subscribersCollection = db.collection("subscribers");
+        const userCollection = db.collection("users");
+        const productsCollection = db.collection("products");
+        const blogCollection = db.collection("blogs");
+        const courseCollection = db.collection("courses");
+
 
         // JWT Authentication
         app.post('/jwt', (req, res) => {
@@ -50,17 +59,18 @@ async function run() {
             res.send(result);
         });
 
-        // product 
+        // Products API
         app.get('/products', async (req, res) => {
             const result = await productsCollection.find().toArray();
             res.send(result);
         });
-        // post route to handle newsletter subscription
+
+        // Subscription API
         app.get('/subscribe', async (req, res) => {
             const result = await subscribersCollection.find().toArray();
             res.send(result);
         });
-        // Post route to handle newsletter subscription
+
         app.post('/subscribe', async (req, res) => {
             const { name, email } = req.body;
 
@@ -82,7 +92,7 @@ async function run() {
             }
         });
 
-        // blogs related
+        // Blogs API
         app.get("/blogs", async (req, res) => {
             const page = parseInt(req.query.page) || 1;
             const pageSize = parseInt(req.query.pageSize) || 6;
@@ -103,26 +113,132 @@ async function run() {
                 totalPages: Math.ceil(totalBlogs / pageSize),
             });
         });
-        app.get("/allBlogs", async (req, res) => {
-            const blogs = await blogCollection.find().sort({ _id: -1 }).
-                limit(6).
-                toArray();
 
-            res.send({
-                blogs,
-            });
+        app.get("/allBlogs", async (req, res) => {
+            const blogs = await blogCollection.find().sort({ _id: -1 }).limit(6).toArray();
+            res.send({ blogs });
         });
+
         app.post("/blogs", async (req, res) => {
             const newBlog = req.body;
             const result = await blogCollection.insertOne(newBlog);
             res.send(result);
         });
 
-        // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // Courses API
+        // Fetch all courses with pagination
+        app.get("/courses", async (req, res) => {
+            const page = parseInt(req.query.page) || 1;
+            const pageSize = parseInt(req.query.pageSize) || 6;
+            const skip = (page - 1) * pageSize;
+
+            try {
+                const totalCourses = await courseCollection.countDocuments();
+                const courses = await courseCollection
+                    .find()
+                    .skip(skip)
+                    .limit(pageSize)
+                    .toArray();
+                res.send({
+                    totalCourses,
+                    courses,
+                    page,
+                    pageSize,
+                    totalPages: Math.ceil(totalCourses / pageSize),
+                });
+            } catch (error) {
+                console.error("Failed to fetch courses:", error);
+                res.status(500).send("Failed to fetch courses");
+            }
+        });
+
+        // Add a new course
+        app.post("/courses", async (req, res) => {
+            try {
+                const data = req.body;
+                const result = await courseCollection.insertOne(data);
+                res.status(201).json(result);
+            } catch (error) {
+                res.status(400).json({ message: "Error adding course", error });
+            }
+        });
+
+        // Search courses by name
+        app.get("/searchCourses", async (req, res) => {
+            const name = req.query.searchValue;
+
+            const query = {};
+            const regex = new RegExp(name, "i");
+            query.courseName = { $regex: regex };
+
+            const result = await courseCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // Count the total number of courses
+        app.get("/countCourses", async (req, res) => {
+            const count = await courseCollection.estimatedDocumentCount();
+            res.send({ count });
+        });
+
+        // Fetch courses for pagination
+        app.get("/pagiCourses", async (req, res) => {
+            const page = parseInt(req.query.page);
+            const size = 6;
+
+            const result = await courseCollection
+                .find()
+                .skip(page > 0 ? (page - 1) * size : 0)
+                .limit(size)
+                .toArray();
+            res.send(result);
+        });
+        // app.get("/categories", async (req, res) => {
+        //     try {
+        //         const categories = await categoryCollection.find().toArray();
+        //         res.send(categories);
+        //     } catch (error) {
+        //         res.status(500).send("Failed to fetch categories");
+        //     }
+        // });
+
+        app.get("/filterCourses", async (req, res) => {
+            const { search, category, page } = req.query;
+            const pageSize = 6;
+            const skip = (parseInt(page) - 1) * pageSize;
+
+            const query = {};
+            if (search) {
+                query.courseName = { $regex: new RegExp(search, "i") };
+            }
+            if (category) {
+                query.category = category;
+            }
+
+            try {
+                const totalCourses = await courseCollection.countDocuments(query);
+                const courses = await courseCollection
+                    .find(query)
+                    .skip(skip)
+                    .limit(pageSize)
+                    .toArray();
+                res.send({
+                    totalCourses,
+                    courses,
+                    page: parseInt(page),
+                    pageSize,
+                    totalPages: Math.ceil(totalCourses / pageSize),
+                });
+            } catch (error) {
+                res.status(500).send("Failed to fetch courses");
+            }
+        });
+
+
+
+
     } finally {
-        // Ensures that the client will close when you finish/error
+        // Close the client connection when server stops
         // await client.close();
     }
 }
@@ -132,7 +248,7 @@ client.connect()
     .then(() => {
         run().catch(console.dir);
         app.listen(port, () => {
-            console.log(`Food Zone is sitting on port ${port}`);
+            console.log(`Electro App is running on port ${port}`);
         });
     })
     .catch(err => {
@@ -141,5 +257,5 @@ client.connect()
 
 // Default route
 app.get('/', (req, res) => {
-    res.send('Food is coming');
+    res.send('Electro App is running');
 });
