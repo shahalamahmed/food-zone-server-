@@ -3,14 +3,26 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 require('dotenv').config();
 // const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // Uncomment this if Stripe is needed
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(
+    cors()
+);
 app.use(express.json());
+// {
+//     origin: [
+//         "http://localhost:5173",
+//         "https://knowledgecenterbd.netlify.app",
+//         "https://food-zone-3f1b9.firebaseapp.com",
+//         "https://food-zone-3f1b9.web.app",
+
+//     ]
+
+// }
 
 // MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yf0cbug.mongodb.net/?retryWrites=true&w=majority`;
@@ -27,13 +39,12 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         await client.connect();
-        console.log("Connected to MongoDB!");
+        //F console.log("Connected to MongoDB!");
 
         // Database Collections
         const db = client.db("ElectroDB");
         const subscribersCollection = db.collection("subscribers");
         const userCollection = db.collection("users");
-        const productsCollection = db.collection("products");
         const blogCollection = db.collection("blogs");
         const courseCollection = db.collection("courses");
 
@@ -59,17 +70,14 @@ async function run() {
             res.send(result);
         });
 
-        // Products API
-        app.get('/products', async (req, res) => {
-            const result = await productsCollection.find().toArray();
-            res.send(result);
-        });
+
 
         // Subscription API
         app.get('/subscribe', async (req, res) => {
             const result = await subscribersCollection.find().toArray();
             res.send(result);
         });
+
 
         app.post('/subscribe', async (req, res) => {
             const { name, email } = req.body;
@@ -118,12 +126,38 @@ async function run() {
             const blogs = await blogCollection.find().sort({ _id: -1 }).limit(6).toArray();
             res.send({ blogs });
         });
-
+        app.get('/blogs/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) }
+            const result = await blogCollection.findOne(query);
+            res.send(result);
+        })
         app.post("/blogs", async (req, res) => {
             const newBlog = req.body;
             const result = await blogCollection.insertOne(newBlog);
             res.send(result);
         });
+        app.delete('/blogs/:id', async (req, res) => {
+            const id = req.params.id;
+            console.log(id);
+
+            // Ensure the ID is properly formatted as an ObjectId
+            const query = { _id: new ObjectId(id) };
+
+            try {
+                const result = await blogCollection.deleteOne(query);
+                if (result.deletedCount === 1) {
+                    console.log('Successfully deleted one document.');
+                    res.send(result);
+                } else {
+                    console.log('No documents matched the query. Deleted 0 documents.');
+                    res.status(404).send({ error: 'Course not found.' });
+                }
+            } catch (error) {
+                console.error('Error deleting courses:', error);
+                res.status(500).send({ error: 'An error occurred while deleting the course.' });
+            }
+        })
 
         // Courses API
         // Fetch all courses with pagination
@@ -151,6 +185,13 @@ async function run() {
                 res.status(500).send("Failed to fetch courses");
             }
         });
+        app.get('/courses/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) }
+            const result = await courseCollection.findOne(query);
+            res.send(result);
+        })
+
 
         // Add a new course
         app.post("/courses", async (req, res) => {
@@ -163,6 +204,48 @@ async function run() {
             }
         });
 
+        app.put('/courses/:id', async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) }
+            const options = { upsert: true }
+            const { courseName, image, description, rating, price } = req.body;
+            const updateData = {
+                $set: {
+                    courseName,
+                    image,
+                    description,
+                    rating,
+                    price
+
+                }
+            };
+            const result = await courseCollection.updateOne(filter, updateData, options);
+            res.send(result);
+        })
+
+
+
+        app.delete('/courses/:id', async (req, res) => {
+            const id = req.params.id;
+            console.log(id);
+
+            // Ensure the ID is properly formatted as an ObjectId
+            const query = { _id: new ObjectId(id) };
+
+            try {
+                const result = await courseCollection.deleteOne(query);
+                if (result.deletedCount === 1) {
+                    console.log('Successfully deleted one document.');
+                    res.send(result);
+                } else {
+                    console.log('No documents matched the query. Deleted 0 documents.');
+                    res.status(404).send({ error: 'Course not found.' });
+                }
+            } catch (error) {
+                console.error('Error deleting courses:', error);
+                res.status(500).send({ error: 'An error occurred while deleting the course.' });
+            }
+        })
         // Search courses by name
         app.get("/searchCourses", async (req, res) => {
             const name = req.query.searchValue;
@@ -193,14 +276,6 @@ async function run() {
                 .toArray();
             res.send(result);
         });
-        // app.get("/categories", async (req, res) => {
-        //     try {
-        //         const categories = await categoryCollection.find().toArray();
-        //         res.send(categories);
-        //     } catch (error) {
-        //         res.status(500).send("Failed to fetch categories");
-        //     }
-        // });
 
         app.get("/filterCourses", async (req, res) => {
             const { search, category, page } = req.query;
@@ -234,7 +309,8 @@ async function run() {
             }
         });
 
-
+        await client.db("admin").command({ ping: 1 });
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
 
 
     } finally {
